@@ -323,6 +323,11 @@ void sendVolt(){
         display.println("Voltage = ");
         display.print((float) newV / 51);
         display.display();
+        Serial.println(newV);
+        if (Serial3.available())
+        {
+          Serial3.println(newV);
+        }
       }
       else
       {
