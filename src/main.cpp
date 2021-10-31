@@ -14,7 +14,7 @@ int oldV=1, newV=0;
 //UNO: (2, 3)
 //SoftwareSerial mySerial(4, 6); // RX, TX
 int pan = 90;
-int tilt = 120;
+int tilt = 90;
 int window_size = 0;
 int BT_alive_cnt = 0;
 int voltCount = 0;
@@ -24,6 +24,21 @@ Servo servo_tilt;
 int servo_min = 20;
 int servo_max = 160;
 
+int ldone = 1;
+int rdone = 1;
+
+long rdistance_in_cm;
+unsigned long rstart_time = 0;
+long ldistance_in_cm;
+unsigned long lstart_time = 0;
+long lfilterArray[20];
+long rfilterArray[20];
+
+unsigned long m1_start_time = 0;
+unsigned long m2_start_time = 0;
+unsigned int m1_done = 1;
+unsigned int m2_done = 1;
+
 unsigned long time;
 
 //FaBoPWM faboPWM;
@@ -32,6 +47,11 @@ int MAX_VALUE = 2000;
 int MIN_VALUE = 300;
 
 // Define motor pins
+#define REcho A6  //ultrasonic echo pin RIGHT
+#define RTrig A7  //ultrasonic Trigger pin RIGHT
+#define LEcho A2  //ultrasonic echo pin LEFT
+#define LTrig A3  //ultrasonic Trigger pin LEFT
+
 #define PWMA 12    //Motor A PWM
 #define DIRA1 34
 #define DIRA2 35  //Motor A Direction
@@ -77,6 +97,106 @@ int MIN_VALUE = 300;
 #define MIN_PWM   300
 
 int Motor_PWM = 1900;
+
+long measureDistanceRight(){
+  long duration;
+  
+  if (rdone) {     
+    // reset start_time only if the distance has been measured 
+    // in the last invocation of the method
+    rdone = 0;
+    rstart_time = millis();
+    digitalWrite(RTrig, LOW);
+  }
+  
+  if (millis() > rstart_time + 2) { 
+    digitalWrite(RTrig, HIGH);
+  }
+  
+  if (millis() > rstart_time + 10) {
+    digitalWrite(RTrig, LOW);
+    duration = pulseIn(REcho, HIGH);
+    rdistance_in_cm = (duration / 2.0) / 29.1;
+    rdone = 1;
+  }
+
+  return rdistance_in_cm;
+  
+}
+
+long measureDistanceLeft(){
+  long duration;
+  
+  if (ldone) {     
+    // reset start_time only if the distance has been measured 
+    // in the last invocation of the method
+    ldone = 0;
+    lstart_time = millis();
+    digitalWrite(LTrig, LOW);
+  }
+  
+  if (millis() > lstart_time + 2) { 
+    digitalWrite(LTrig, HIGH);
+  }
+  
+  if (millis() > lstart_time + 10) {
+    digitalWrite(LTrig, LOW);
+    duration = pulseIn(LEcho, HIGH);
+    ldistance_in_cm = (duration / 2.0) / 29.1;
+    ldone = 1;
+  }
+
+  return ldistance_in_cm;
+  
+}
+
+long measureAndFilterDistanceL()
+{
+  for (int sample = 0; sample < 20; sample++) {
+      lfilterArray[sample] = measureDistanceLeft();
+    //delay(30); // to avoid untrasonic interfering
+  }
+  for (int i = 0; i < 19; i++) {
+    for (int j = i + 1; j < 20; j++) {
+      if (lfilterArray[i] > lfilterArray[j]) {
+        float swap = lfilterArray[i];
+        lfilterArray[i] = lfilterArray[j];
+        lfilterArray[j] = swap;
+      }
+    }
+  }
+  long sum = 0;
+  for (int sample = 5; sample < 15; sample++) {
+    sum += lfilterArray[sample];
+  }
+  return sum / 10;
+
+}
+
+
+long measureAndFilterDistanceR()
+{
+  for (int sample = 0; sample < 20; sample++) {
+      rfilterArray[sample] = measureDistanceRight();
+    //delay(30); // to avoid untrasonic interfering
+  }
+  for (int i = 0; i < 19; i++) {
+    for (int j = i + 1; j < 20; j++) {
+      if (rfilterArray[i] > rfilterArray[j]) {
+        float swap = rfilterArray[i];
+        rfilterArray[i] = rfilterArray[j];
+        rfilterArray[j] = swap;
+      }
+    }
+  }
+  long sum = 0;
+  for (int sample = 5; sample < 15; sample++) {
+    sum += rfilterArray[sample];
+  }
+  return sum / 10;
+
+}
+
 
 
 //    ↑A-----B↑
@@ -207,8 +327,11 @@ void STOP()
 
 void UART_Control()
 {
+
   String myString;
   char BT_Data = 0;
+
+  Motor_PWM = 1850;
   // USB data
   /****
    * Check if USB Serial data contain brackets
@@ -239,25 +362,84 @@ void UART_Control()
         (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max)) {
       pan = firstValue.toInt();
       tilt = secondValue.toInt();
-      window_size = thirdValue.toInt();
+      window_size = abs(thirdValue.toInt());
+      display.clearDisplay();
+      display.setCursor(0, 0);     // Start at top-left corner
+      display.println(window_size);
+      display.display();
     }
+
+    if (measureAndFilterDistanceL() < 5 || measureAndFilterDistanceR() < 5)
+    {
+      display.clearDisplay();
+      display.setCursor(0, 0);     // Start at top-left corner
+      display.println(measureAndFilterDistanceL());
+      display.println(measureAndFilterDistanceR());
+      display.display();
+      return;
+    }
+
+    if (m2_done)
+    {
+      STOP();
+      m2_done = 0;
+      m2_start_time = millis();
+    }
+    else
+    {
+      if (m1_done)
+      {
+        STOP();
+        m1_done = 0;
+        m1_start_time = millis();
+      }
+      else
+      {
+        if (pan < 85)
+        {
+          rotate_2();
+        }
+        else if (pan > 95)
+        {
+          rotate_1();
+        }
+        else
+        {
+          Motor_PWM = 1900;
+          ADVANCE();
+          Motor_PWM = 1850;
+        }
+      }
+
+      if (millis() > m1_start_time + 80)
+      {
+        m1_done = 1;
+      }
+
+    }
+
+    if (millis() > m2_start_time + 500)
+    {
+      m2_done = 1;
+      STOP();
+    }
+
+
+    // ADVANCE();
+    // delay(80);
+    // STOP();
+    // delay(200);
+
     SERIAL.flush();
     Serial3.println(myString);
     Serial3.println("Done");
     if (myString != "") {
       display.clearDisplay();
       display.setCursor(0, 0);     // Start at top-left corner
-      display.println("Serial_Data = ");
-      display.println(myString);
+      display.println(window_size);
       display.display();
     }
   }
-
-
-
-
-
-
 
   //BT Control
   /*
@@ -300,21 +482,12 @@ void UART_Control()
   }
 }
 
-void draw_text(byte x_pos, byte y_pos, char* text, byte text_size)
-{
-  display.setCursor(x_pos, y_pos);
-  display.setTextSize(text_size);
-  display.print(text);
-  display.display();
-}
 
 
 /*Voltage Readings transmitter
 Sends them via Serial3*/
 void sendVolt(){
     newV = analogRead(A0);
-    
-    
     if(newV!=oldV) {
       if (newV > 0)
       {
@@ -323,11 +496,6 @@ void sendVolt(){
         display.println("Voltage = ");
         display.print((float) newV / 51);
         display.display();
-        Serial.println(newV);
-        if (Serial3.available())
-        {
-          Serial3.println(newV);
-        }
       }
       else
       {
@@ -336,14 +504,13 @@ void sendVolt(){
         display.println("AI Robot");
         display.display();
       }
-      
+      if (!Serial3.available()) {
+        Serial3.println(newV);
+        Serial.println(newV);
+      }
     }
-    
     oldV=newV;
 }
-
-
-
 
 
 
@@ -351,7 +518,7 @@ void sendVolt(){
 //Where the program starts
 void setup()
 {
-  SERIAL.begin(9600); // USB serial setup
+  SERIAL.begin(115200); // USB serial setup CHANGE BACK TO 115200
   SERIAL.println("Start");
   STOP(); // Stop the robot
   Serial3.begin(9600); // BT serial setup
@@ -374,10 +541,15 @@ void setup()
 
   //Setup Voltage detector
   pinMode(A0, INPUT);
+  //initialize ultrasonic echo and trigger pins
+  pinMode(REcho,INPUT);
+  pinMode(LEcho, INPUT);
+  pinMode(RTrig,OUTPUT);
+  pinMode(LTrig,OUTPUT);
 }
 
 void loop()
-{
+{  
   // run the code in every 20ms
   if (millis() > (time + 15)) {
     voltCount++;
