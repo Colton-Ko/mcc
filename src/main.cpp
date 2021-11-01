@@ -23,7 +23,7 @@ Servo servo_pan;
 Servo servo_tilt;
 int servo_min = 20;
 int servo_max = 160;
-
+int stoppable = 0;
 int ldone = 1;
 int rdone = 1;
 
@@ -240,8 +240,8 @@ void LEFT_1()
 //    ↑C-----D↓
 void RIGHT_2()
 {
-  MOTORA_FORWARD(Motor_PWM); 
-  MOTORB_FORWARD(Motor_PWM);
+  MOTORA_FORWARD(Motor_PWM+10); 
+  MOTORB_FORWARD(Motor_PWM+10);
   MOTORC_BACKOFF(Motor_PWM); 
   MOTORD_BACKOFF(Motor_PWM);
 }
@@ -273,8 +273,8 @@ void RIGHT_1()
 //    ↓C-----D↑
 void LEFT_2()
 {
-  MOTORA_BACKOFF(Motor_PWM); 
-  MOTORB_BACKOFF(Motor_PWM);
+  MOTORA_BACKOFF(Motor_PWM+10); 
+  MOTORB_BACKOFF(Motor_PWM+10);
   MOTORC_FORWARD(Motor_PWM); 
   MOTORD_FORWARD(Motor_PWM);
 }
@@ -339,6 +339,11 @@ void UART_Control()
 
   if (SERIAL.available())
   {
+    if (stoppable)
+    {
+      STOP();
+      return;
+    }
     char inputChar = SERIAL.read();
     if (inputChar == '(') { // Start loop when left bracket detected
       myString = "";
@@ -362,26 +367,103 @@ void UART_Control()
         (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max)) {
       pan = firstValue.toInt();
       tilt = secondValue.toInt();
-      window_size = abs(thirdValue.toInt());
+      window_size = thirdValue.toInt();
+      measureAndFilterDistanceL();
+      measureAndFilterDistanceR();
+
       display.clearDisplay();
       display.setCursor(0, 0);     // Start at top-left corner
-      display.println(window_size);
+      display.println(ldistance_in_cm);
+      display.println(rdistance_in_cm);
       display.display();
+
+      if (ldistance_in_cm < 1 || rdistance_in_cm < 1)
+      {
+        STOP();
+        return;
+      }
     }
 
-    if (measureAndFilterDistanceL() < 5 || measureAndFilterDistanceR() < 5)
+    if (window_size == 0)
     {
-      display.clearDisplay();
-      display.setCursor(0, 0);     // Start at top-left corner
-      display.println(measureAndFilterDistanceL());
-      display.println(measureAndFilterDistanceR());
-      display.display();
+      Serial.println("STOP");
+      STOP();
       return;
+    }
+
+
+    if (ldistance_in_cm < 13 || rdistance_in_cm < 13)
+    {
+      if (ldistance_in_cm > 800)
+      {
+        LEFT_2();
+        delay(20);
+        STOP();
+        return;
+      }
+      else if (rdistance_in_cm > 800)
+      {
+        RIGHT_2();
+        delay(20);
+        STOP();
+        return;
+      }
+    }
+
+    // R1 = Left
+    // R2 = Right
+
+    // Near field mode
+    if (ldistance_in_cm < 10 || rdistance_in_cm < 10)
+    {
+      // Promixity Guide Mode
+      Serial.print("PGM on ");
+      measureAndFilterDistanceL();
+      measureAndFilterDistanceR();
+      delay(50);
+      Serial.print("Ld = ");
+      Serial.print(ldistance_in_cm);
+      Serial.print(" Rd = ");
+      Serial.print(rdistance_in_cm);
+      Motor_PWM = 1900;
+
+      if (ldistance_in_cm == rdistance_in_cm)
+      {
+        ADVANCE();
+        delay(15);
+        STOP();
+        measureAndFilterDistanceL();
+      measureAndFilterDistanceR();
+      }
+
+      if (ldistance_in_cm > rdistance_in_cm)
+      {
+        Serial.println(" -> R1");
+        // rotate_1();
+        LEFT_2();
+        delay(9);
+        STOP();
+              measureAndFilterDistanceL();
+      measureAndFilterDistanceR();
+
+      }
+      if (rdistance_in_cm > ldistance_in_cm)
+      {
+         Serial.println(" -> R2");
+        RIGHT_2();
+        delay(10);
+        STOP();
+              measureAndFilterDistanceL();
+      measureAndFilterDistanceR();
+
+      }
+
     }
 
     if (m2_done)
     {
       STOP();
+      Motor_PWM = 1850;
       m2_done = 0;
       m2_start_time = millis();
     }
@@ -395,23 +477,28 @@ void UART_Control()
       }
       else
       {
-        if (pan < 85)
+        if (pan < 86)
         {
+          Serial.println("R2");
+          Motor_PWM = 1850;
           rotate_2();
         }
-        else if (pan > 95)
+        else if (pan > 94)
         {
+           Serial.println("R1");
+            Motor_PWM = 1850;
           rotate_1();
         }
         else
         {
           Motor_PWM = 1900;
+          Serial.println("FWD");
           ADVANCE();
-          Motor_PWM = 1850;
+         
         }
       }
 
-      if (millis() > m1_start_time + 80)
+      if (millis() > m1_start_time + 60)
       {
         m1_done = 1;
       }
@@ -421,14 +508,12 @@ void UART_Control()
     if (millis() > m2_start_time + 500)
     {
       m2_done = 1;
+      Serial.println("STOP");
+      Motor_PWM = 1850;
       STOP();
     }
 
 
-    // ADVANCE();
-    // delay(80);
-    // STOP();
-    // delay(200);
 
     SERIAL.flush();
     Serial3.println(myString);
@@ -436,7 +521,8 @@ void UART_Control()
     if (myString != "") {
       display.clearDisplay();
       display.setCursor(0, 0);     // Start at top-left corner
-      display.println(window_size);
+      display.println(ldistance_in_cm);
+      display.println(rdistance_in_cm);
       display.display();
     }
   }
@@ -491,10 +577,14 @@ void sendVolt(){
     if(newV!=oldV) {
       if (newV > 0)
       {
+        if (newV > 2.5)
+        {
+          stoppable = 1;
+        }
         display.clearDisplay();
         display.setCursor(0, 0);
-        display.println("Voltage = ");
-        display.print((float) newV / 51);
+        display.println("Power = ");
+        display.print((float) (5*newV / 51)*(5*newV / 51)/50);
         display.display();
       }
       else
