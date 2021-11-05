@@ -6,6 +6,7 @@
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 
+
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET 28 //4 // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -28,7 +29,9 @@ int count = 0;
 
 int ldone = 1;
 int rdone = 1;
-int bdone = 1;
+int brdone = 1;
+int bldone = 1;
+
 bool flag1 = 1;
 
 long rdistance_in_cm;
@@ -37,12 +40,11 @@ unsigned long rstart_time = 0;
 long ldistance_in_cm;
 unsigned long lstart_time = 0;
 
-long bdistance_in_cm;
-unsigned long bstart_time = 0;
+long brdistance_in_cm;
+unsigned long brstart_time = 0;
 
-long lfilterArray[20];
-long rfilterArray[20];
-long bfilterArray[20];
+long bldistance_in_cm;
+unsigned long blstart_time = 0;
 
 unsigned long m1_start_time = 0;
 unsigned long m2_start_time = 0;
@@ -62,8 +64,12 @@ int MIN_VALUE = 300;
 #define RTrig A7 //ultrasonic Trigger pin RIGHT
 #define LEcho A2 //ultrasonic echo pin LEFT
 #define LTrig A3 //ultrasonic Trigger pin LEFT
-#define BEcho A8
-#define BTrig A9
+
+#define BREcho 32
+#define BRTrig 33
+
+#define BLEcho 40
+#define BLTrig 41
 
 #define PWMA 12 //Motor A PWM
 #define DIRA1 34
@@ -77,6 +83,13 @@ int MIN_VALUE = 300;
 #define PWMD 5   //Motor D PWM
 #define DIRD1 A4 //26
 #define DIRD2 A5 //27  //Motor D Direction
+
+#define FR_MARGIN 10
+#define FL_MARGIN 10
+#define BR_MARGIN 20
+#define BL_MARGIN 20
+
+// #define ULTRASONIC_TEST
 
 #define MOTORA_FORWARD(pwm)    \
   do                           \
@@ -181,37 +194,65 @@ int MIN_VALUE = 300;
 #define MAX_PWM 2000
 #define MIN_PWM 300
 
-int Motor_PWM = 31;
+int Motor_PWM = 25; //31
 
-long measureDistanceBack()
+long measureDistanceBackL()
 {
   long duration;
 
-  if (bdone)
+  if (bldone)
   {
     // reset start_time only if the distance has been measured
     // in the last invocation of the method
-    bdone = 0;
-    bstart_time = millis();
-    digitalWrite(BTrig, LOW);
+    bldone = 0;
+    blstart_time = millis();
+    digitalWrite(BLTrig, LOW);
   }
 
-  if (millis() > bstart_time + 2)
+  if (millis() > blstart_time + 2)
   {
-    digitalWrite(BTrig, HIGH);
+    digitalWrite(BLTrig, HIGH);
   }
 
-  if (millis() > bstart_time + 10)
+  if (millis() > blstart_time + 10)
   {
-    digitalWrite(BTrig, LOW);
-    duration = pulseIn(BEcho, HIGH);
-    bdistance_in_cm = (duration / 2.0) / 29.1;
-    bdone = 1;
+    digitalWrite(BLTrig, LOW);
+    duration = pulseIn(BLEcho, HIGH);
+    bldistance_in_cm = (duration / 2.0) / 29.1;
+    bldone = 1;
   }
 
-  return bdistance_in_cm;
+  return bldistance_in_cm;
 }
 
+
+long measureDistanceBackR()
+{
+  long duration;
+
+  if (brdone)
+  {
+    // reset start_time only if the distance has been measured
+    // in the last invocation of the method
+    brdone = 0;
+    brstart_time = millis();
+    digitalWrite(BRTrig, LOW);
+  }
+
+  if (millis() > brstart_time + 2)
+  {
+    digitalWrite(BRTrig, HIGH);
+  }
+
+  if (millis() > brstart_time + 10)
+  {
+    digitalWrite(BRTrig, LOW);
+    duration = pulseIn(BREcho, HIGH);
+    brdistance_in_cm = (duration / 2.0) / 29.1;
+    brdone = 1;
+  }
+
+}
 
 long measureDistanceRight()
 {
@@ -238,9 +279,8 @@ long measureDistanceRight()
     rdistance_in_cm = (duration / 2.0) / 29.1;
     rdone = 1;
   }
-
-  return rdistance_in_cm;
 }
+
 
 long measureDistanceLeft()
 {
@@ -268,92 +308,6 @@ long measureDistanceLeft()
     ldone = 1;
   }
 
-  return ldistance_in_cm;
-}
-
-long measureAndFilterDistanceL()
-{
-  for (int sample = 0; sample < 20; sample++)
-  {
-    lfilterArray[sample] = measureDistanceLeft();
-    // delay(5); // to avoid untrasonic interfering
-  }
-  for (int i = 0; i < 19; i++)
-  {
-    for (int j = i + 1; j < 20; j++)
-    {
-      if (lfilterArray[i] > lfilterArray[j])
-      {
-        float swap = lfilterArray[i];
-        lfilterArray[i] = lfilterArray[j];
-        lfilterArray[j] = swap;
-      }
-    }
-  }
-  long sum = 0;
-  for (int sample = 5; sample < 15; sample++)
-  {
-    sum += lfilterArray[sample];
-  }
-  ldistance_in_cm = sum/10;
-  return sum / 10;
-}
-
-long measureAndFilterDistanceB()
-{
-  for (int sample = 0; sample < 20; sample++)
-  {
-    bfilterArray[sample] = measureDistanceBack();
-    // delay(5); // to avoid untrasonic interfering
-  }
-  for (int i = 0; i < 19; i++)
-  {
-    for (int j = i + 1; j < 20; j++)
-    {
-      if (bfilterArray[i] > bfilterArray[j])
-      {
-        float swap = bfilterArray[i];
-        bfilterArray[i] = bfilterArray[j];
-        bfilterArray[j] = swap;
-      }
-    }
-  }
-  long sum = 0;
-  for (int sample = 5; sample < 15; sample++)
-  {
-    sum += bfilterArray[sample];
-  }
-  bdistance_in_cm = sum/10;
-  return sum / 10;
-}
-
-
-long measureAndFilterDistanceR()
-{
-  for (int sample = 0; sample < 20; sample++)
-  {
-    rfilterArray[sample] = measureDistanceRight();
-    // delay(5); // to avoid untrasonic interfering
-  }
-  for (int i = 0; i < 19; i++)
-  {
-    for (int j = i + 1; j < 20; j++)
-    {
-      if (rfilterArray[i] > rfilterArray[j])
-      {
-        float swap = rfilterArray[i];
-        rfilterArray[i] = rfilterArray[j];
-        rfilterArray[j] = swap;
-      }
-    }
-  }
-  long sum = 0;
-  for (int sample = 5; sample < 15; sample++)
-  {
-    sum += rfilterArray[sample];
-  }
-  rdistance_in_cm = sum/10;
-  return sum / 10;
 }
 
 //    ↑A-----B↑
@@ -496,9 +450,12 @@ void UART_Control()
 
   if (SERIAL.available())
   {
-    // measureDistanceBack();
+
     measureDistanceLeft();
     measureDistanceRight();
+    measureDistanceBackL();
+    measureDistanceBackR();
+
     char inputChar = SERIAL.read();
     if (inputChar == '(')
     { // Start loop when left bracket detected
@@ -533,25 +490,33 @@ void UART_Control()
       // display.println(rdistance_in_cm);
       // display.display();
 
-    if (pan < 80)
-    {
-      rotate_2();
-      return;
-    }
-    if (pan > 100)
-    {
-      rotate_1();
-      return;
-    }
-
-      if (ldistance_in_cm < 5 || rdistance_in_cm < 5)
+      if (pan < 80)
       {
-        BACK();
+        rotate_2();
         return;
       }
-      if (bdistance_in_cm < 5)
+      if (pan > 100)
       {
-        ADVANCE();
+        rotate_1();
+        return;
+      }
+      if (bldistance_in_cm < BL_MARGIN)
+      {
+        RIGHT_2();
+        delay(500);
+        return;
+      }
+      else if (brdistance_in_cm < BR_MARGIN)
+      {
+        LEFT_2();
+        delay(500);
+        return;
+      }
+
+      else if (ldistance_in_cm < FL_MARGIN || rdistance_in_cm < FR_MARGIN)
+      {
+        BACK();
+        delay(700);
         return;
       }
     }
@@ -571,10 +536,6 @@ void UART_Control()
     {
       ADVANCE();
     }
-
-
-
-
 
     // R1 = Left
     // R2 = Right
@@ -661,7 +622,6 @@ void UART_Control()
     //   else
     //   {
 
-
     //     if (pan < 86)
     //     {
     //       Serial.println("R2");
@@ -679,15 +639,14 @@ void UART_Control()
     //       // delay(20);
     //       // STOP();
     //       // delay(100);
-          
-          
+
     //     }
     //     else
     //     {
     //       // Motor_PWM = 1900;
     //       Serial.println("FWD");
     //       ADVANCE();
-          
+
     //     }
     //   }
 
@@ -710,7 +669,6 @@ void UART_Control()
     Serial3.println("Done");
     if (myString != "")
     {
-
     }
   }
 
@@ -858,26 +816,39 @@ void setup()
   pinMode(LEcho, INPUT);
   pinMode(RTrig, OUTPUT);
   pinMode(LTrig, OUTPUT);
-
+  pinMode(BREcho, INPUT);
+  pinMode(BRTrig, OUTPUT);
+  pinMode(BLEcho, INPUT);
+  pinMode(BLTrig, OUTPUT);
 }
 
 ISR(TIMER2_COMPA_vect)
 {
- 
 }
 
 void loop()
 {
-
+  #ifdef ULTRASONIC_TEST
+    measureDistanceLeft();
+    measureDistanceBackR();
+    measureDistanceRight();
+    measureDistanceBackL();
+    Serial.print(ldistance_in_cm);
+    Serial.print(" ");
+    Serial.print(rdistance_in_cm);
+    Serial.print(" ");
+    Serial.print(brdistance_in_cm);
+    Serial.print(" ");
+    Serial.print(bldistance_in_cm);
+    Serial.print(" ");
+    Serial.println(" cykablyat!!!!");
+  
+  #else
   // run the code in every 20ms
   if (millis() > (time + 15))
   {
     voltCount++;
     time = millis();
-
-    // measureDistanceBack();
-    // measureDistanceRight();
-    // measureDistanceLeft();
 
     // Serial.print(ldistance_in_cm);
     // Serial.print(" ");
@@ -899,4 +870,5 @@ void loop()
     voltCount = 0;
     sendVolt();
   }
+  #endif
 }
