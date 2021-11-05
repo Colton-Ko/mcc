@@ -24,15 +24,25 @@ Servo servo_tilt;
 int servo_min = 20;
 int servo_max = 160;
 int stoppable = 0;
+int count = 0;
+
 int ldone = 1;
 int rdone = 1;
+int bdone = 1;
+bool flag1 = 1;
 
 long rdistance_in_cm;
 unsigned long rstart_time = 0;
+
 long ldistance_in_cm;
 unsigned long lstart_time = 0;
+
+long bdistance_in_cm;
+unsigned long bstart_time = 0;
+
 long lfilterArray[20];
 long rfilterArray[20];
+long bfilterArray[20];
 
 unsigned long m1_start_time = 0;
 unsigned long m2_start_time = 0;
@@ -52,6 +62,8 @@ int MIN_VALUE = 300;
 #define RTrig A7 //ultrasonic Trigger pin RIGHT
 #define LEcho A2 //ultrasonic echo pin LEFT
 #define LTrig A3 //ultrasonic Trigger pin LEFT
+#define BEcho A8
+#define BTrig A9
 
 #define PWMA 12 //Motor A PWM
 #define DIRA1 34
@@ -169,7 +181,37 @@ int MIN_VALUE = 300;
 #define MAX_PWM 2000
 #define MIN_PWM 300
 
-int Motor_PWM = 1900;
+int Motor_PWM = 31;
+
+long measureDistanceBack()
+{
+  long duration;
+
+  if (bdone)
+  {
+    // reset start_time only if the distance has been measured
+    // in the last invocation of the method
+    bdone = 0;
+    bstart_time = millis();
+    digitalWrite(BTrig, LOW);
+  }
+
+  if (millis() > bstart_time + 2)
+  {
+    digitalWrite(BTrig, HIGH);
+  }
+
+  if (millis() > bstart_time + 10)
+  {
+    digitalWrite(BTrig, LOW);
+    duration = pulseIn(BEcho, HIGH);
+    bdistance_in_cm = (duration / 2.0) / 29.1;
+    bdone = 1;
+  }
+
+  return bdistance_in_cm;
+}
+
 
 long measureDistanceRight()
 {
@@ -234,7 +276,7 @@ long measureAndFilterDistanceL()
   for (int sample = 0; sample < 20; sample++)
   {
     lfilterArray[sample] = measureDistanceLeft();
-    delay(5); // to avoid untrasonic interfering
+    // delay(5); // to avoid untrasonic interfering
   }
   for (int i = 0; i < 19; i++)
   {
@@ -253,15 +295,45 @@ long measureAndFilterDistanceL()
   {
     sum += lfilterArray[sample];
   }
+  ldistance_in_cm = sum/10;
   return sum / 10;
 }
+
+long measureAndFilterDistanceB()
+{
+  for (int sample = 0; sample < 20; sample++)
+  {
+    bfilterArray[sample] = measureDistanceBack();
+    // delay(5); // to avoid untrasonic interfering
+  }
+  for (int i = 0; i < 19; i++)
+  {
+    for (int j = i + 1; j < 20; j++)
+    {
+      if (bfilterArray[i] > bfilterArray[j])
+      {
+        float swap = bfilterArray[i];
+        bfilterArray[i] = bfilterArray[j];
+        bfilterArray[j] = swap;
+      }
+    }
+  }
+  long sum = 0;
+  for (int sample = 5; sample < 15; sample++)
+  {
+    sum += bfilterArray[sample];
+  }
+  bdistance_in_cm = sum/10;
+  return sum / 10;
+}
+
 
 long measureAndFilterDistanceR()
 {
   for (int sample = 0; sample < 20; sample++)
   {
     rfilterArray[sample] = measureDistanceRight();
-    delay(5); // to avoid untrasonic interfering
+    // delay(5); // to avoid untrasonic interfering
   }
   for (int i = 0; i < 19; i++)
   {
@@ -280,6 +352,7 @@ long measureAndFilterDistanceR()
   {
     sum += rfilterArray[sample];
   }
+  rdistance_in_cm = sum/10;
   return sum / 10;
 }
 
@@ -287,7 +360,7 @@ long measureAndFilterDistanceR()
 //     |  ↑  |
 //     |  |  |
 //    ↑C-----D↑
-void BACK(uint8_t pwm_A, uint8_t pwm_B, uint8_t pwm_C, uint8_t pwm_D)
+void BACK()
 {
   MOTORA_BACKOFF(Motor_PWM);
   MOTORB_FORWARD(Motor_PWM);
@@ -324,8 +397,8 @@ void LEFT_1()
 //    ↑C-----D↓
 void RIGHT_2()
 {
-  MOTORA_FORWARD(Motor_PWM + 10);
-  MOTORB_FORWARD(Motor_PWM + 10);
+  MOTORA_FORWARD(Motor_PWM);
+  MOTORB_FORWARD(Motor_PWM);
   MOTORC_BACKOFF(Motor_PWM);
   MOTORD_BACKOFF(Motor_PWM);
 }
@@ -357,8 +430,8 @@ void RIGHT_1()
 //    ↓C-----D↑
 void LEFT_2()
 {
-  MOTORA_BACKOFF(Motor_PWM + 10);
-  MOTORB_BACKOFF(Motor_PWM + 10);
+  MOTORA_BACKOFF(Motor_PWM);
+  MOTORB_BACKOFF(Motor_PWM);
   MOTORC_FORWARD(Motor_PWM);
   MOTORD_FORWARD(Motor_PWM);
 }
@@ -413,9 +486,9 @@ void UART_Control()
 {
 
   String myString;
-  char BT_Data = 0;
+  // char BT_Data = 0;
 
-  Motor_PWM = 1850;
+  // Motor_PWM = 1850;
   // USB data
   /****
    * Check if USB Serial data contain brackets
@@ -423,11 +496,9 @@ void UART_Control()
 
   if (SERIAL.available())
   {
-    if (stoppable)
-    {
-      STOP();
-      return;
-    }
+    // measureDistanceBack();
+    measureDistanceLeft();
+    measureDistanceRight();
     char inputChar = SERIAL.read();
     if (inputChar == '(')
     { // Start loop when left bracket detected
@@ -455,37 +526,53 @@ void UART_Control()
       pan = firstValue.toInt();
       tilt = secondValue.toInt();
       window_size = thirdValue.toInt();
-      measureAndFilterDistanceL();
-      measureAndFilterDistanceR();
 
-    if (window_size > 0)
+      // display.clearDisplay();
+      // display.setCursor(0, 0); // Start at top-left corner
+      // display.println(ldistance_in_cm);
+      // display.println(rdistance_in_cm);
+      // display.display();
+
+    if (pan < 80)
     {
-      not_detected = 0;
+      rotate_2();
+      return;
+    }
+    if (pan > 100)
+    {
+      rotate_1();
+      return;
     }
 
-      display.clearDisplay();
-      display.setCursor(0, 0); // Start at top-left corner
-      display.println(ldistance_in_cm);
-      display.println(rdistance_in_cm);
-      display.display();
-
-      if (ldistance_in_cm < 2 || rdistance_in_cm < 2)
+      if (ldistance_in_cm < 5 || rdistance_in_cm < 5)
       {
-        STOP();
+        BACK();
+        return;
+      }
+      if (bdistance_in_cm < 5)
+      {
+        ADVANCE();
         return;
       }
     }
 
-
-
-
-
-    // if (window_size == 0)
+    // if (pan < 84)
     // {
-    //   Serial.println("STOP");
-    //   STOP();
+    //   rotate_2();
     //   return;
     // }
+    // if (pan > 96)
+    // {
+    //   rotate_1();
+    //   return;
+    // }
+
+    if (window_size > 0)
+    {
+      ADVANCE();
+    }
+
+
 
 
 
@@ -493,132 +580,137 @@ void UART_Control()
     // R2 = Right
 
     // Near field mode
-    if (ldistance_in_cm < 10 || rdistance_in_cm < 10)
-    {
-      // Promixity Guide Mode
-      Serial.print("PGM on ");
-      measureAndFilterDistanceL();
-      measureAndFilterDistanceR();
-      delay(50);
-      Serial.print("Ld = ");
-      Serial.print(ldistance_in_cm);
-      Serial.print(" Rd = ");
-      Serial.print(rdistance_in_cm);
-      Motor_PWM = 1900;
+    // if (ldistance_in_cm < 10 || rdistance_in_cm < 10)
+    // {
+    //   // Promixity Guide Mode
+    //   Serial.print("PGM on ");
+    //   measureAndFilterDistanceL();
+    //   measureAndFilterDistanceR();
+    //   // delay(50);
+    //   Serial.print("Ld = ");
+    //   Serial.print(ldistance_in_cm);
+    //   Serial.print(" Rd = ");
+    //   Serial.print(rdistance_in_cm);
+    //   Motor_PWM = 1900;
 
-      if (abs(ldistance_in_cm - rdistance_in_cm) < 2)
-      {
-        ADVANCE();
-        delay(15);
-        STOP();
-        measureAndFilterDistanceL();
-        measureAndFilterDistanceR();
-      }
+    //   if (abs(ldistance_in_cm - rdistance_in_cm) < 2)
+    //   {
+    //     ADVANCE();
+    //     // delay(15);
+    //     STOP();
+    //     measureAndFilterDistanceL();
+    //     measureAndFilterDistanceR();
+    //   }
 
-      if (ldistance_in_cm > rdistance_in_cm)
-      {
-        Serial.println(" -> R1");
-        // rotate_1();
-        LEFT_2();
-        delay(9);
-        STOP();
-        measureAndFilterDistanceL();
-        measureAndFilterDistanceR();
-      }
-      if (rdistance_in_cm > ldistance_in_cm)
-      {
-        Serial.println(" -> R2");
-        RIGHT_2();
-        delay(10);
-        STOP();
-        measureAndFilterDistanceL();
-        measureAndFilterDistanceR();
-      }
-    }
+    //   if (ldistance_in_cm > rdistance_in_cm)
+    //   {
+    //     Serial.println(" -> R1");
+    //     // rotate_1();
+    //     LEFT_2();
+    //     // delay(9);
+    //     // STOP();
+    //     measureAndFilterDistanceL();
+    //     measureAndFilterDistanceR();
+    //   }
+    //   if (rdistance_in_cm > ldistance_in_cm)
+    //   {
+    //     Serial.println(" -> R2");
+    //     RIGHT_2();
+    //     // delay(10);
+    //     // STOP();
+    //     measureAndFilterDistanceL();
+    //     measureAndFilterDistanceR();
+    //   }
+    // }
 
-    if (ldistance_in_cm < 30 || rdistance_in_cm < 30)
-    {
-      if (ldistance_in_cm > 800)
-      {
-        Serial.println("LSH");
-        LEFT_2();
-        delay(20);
-        STOP();
-        return;
-      }
-      else if (rdistance_in_cm > 800)
-      {
-        Serial.println("RSH");
-        RIGHT_2();
-        delay(20);
-        STOP();
-        return;
-      }
-    }
+    // if (ldistance_in_cm < 30 || rdistance_in_cm < 30)
+    // {
+    //   if (ldistance_in_cm > 800)
+    //   {
+    //     Serial.println("LSH");
+    //     LEFT_2();
+    //     // delay(20);
+    //     // STOP();
+    //     return;
+    //   }
+    //   else if (rdistance_in_cm > 800)
+    //   {
+    //     Serial.println("RSH");
+    //     RIGHT_2();
+    //     // delay(20);
+    //     // STOP();
+    //     return;
+    //   }
+    // }
 
-    if (m2_done)
-    {
-      STOP();
-      Motor_PWM = 1850;
-      m2_done = 0;
-      m2_start_time = millis();
-    }
-    else
-    {
-      if (m1_done)
-      {
-        STOP();
-        m1_done = 0;
-        m1_start_time = millis();
-      }
-      else
-      {
+    // if (m2_done)
+    // {
+    //   STOP();
+    //   // Motor_PWM = 1850;
+    //   m2_done = 0;
+    //   m2_start_time = millis();
+    // }
+    // else
+    // {
+    //   if (m1_done)
+    //   {
+    //     STOP();
+    //     m1_done = 0;
+    //     m1_start_time = millis();
+    //   }
+    //   else
+    //   {
 
 
-        if (pan < 86)
-        {
-          Serial.println("R2");
-          Motor_PWM = 1850;
-          rotate_2();
-        }
-        else if (pan > 94)
-        {
-          Serial.println("R1");
-          Motor_PWM = 1850;
-          rotate_1();
-        }
-        else
-        {
-          Motor_PWM = 1900;
-          Serial.println("FWD");
-          ADVANCE();
-        }
-      }
+    //     if (pan < 86)
+    //     {
+    //       Serial.println("R2");
+    //       // Motor_PWM = 1850;
+    //       rotate_2();
+    //       // delay(20);
+    //       // STOP();
+    //       // delay(100);
+    //     }
+    //     else if (pan > 94)
+    //     {
+    //       Serial.println("R1");
+    //       // Motor_PWM = 1850;
+    //       rotate_1();
+    //       // delay(20);
+    //       // STOP();
+    //       // delay(100);
+          
+          
+    //     }
+    //     else
+    //     {
+    //       // Motor_PWM = 1900;
+    //       Serial.println("FWD");
+    //       ADVANCE();
+          
+    //     }
+    //   }
 
-      if (millis() > m1_start_time + 60)
-      {
-        m1_done = 1;
-      }
-    }
+    //   if (millis() > m1_start_time + 60)
+    //   {
+    //     m1_done = 1;
+    //   }
+    // }
 
-    if (millis() > m2_start_time + 500)
-    {
-      m2_done = 1;
-      Serial.println("STOP");
-      Motor_PWM = 1850;
-      STOP();
-    }
+    // if (millis() > m2_start_time + 500)
+    // {
+    //   m2_done = 1;
+    //   Serial.println("STOP");
+    //   // Motor_PWM = 1850;
+    //   STOP();
+    // }
 
     SERIAL.flush();
     Serial3.println(myString);
     Serial3.println("Done");
     if (myString != "")
     {
-      display.clearDisplay();
-      display.setCursor(0, 0); // Start at top-left corner
-      display.println(ldistance_in_cm);
-      display.println(rdistance_in_cm);
-      display.display();
+
     }
   }
 
@@ -627,79 +719,77 @@ void UART_Control()
     Receive data from app and translate it to motor movements
   */
   // BT Module on Serial 3 (D14 & D15)
-  if (Serial3.available())
-  {
-    BT_Data = Serial3.read();
-    SERIAL.print(BT_Data);
-    Serial3.flush();
-    BT_alive_cnt = 100;
-    display.clearDisplay();
-    display.setCursor(0, 0); // Start at top-left corner
-    display.println("BT_Data = ");
-    display.println(BT_Data);
-    display.display();
-  }
+  // if (Serial3.available())
+  // {
+  //   BT_Data = Serial3.read();
+  //   SERIAL.print(BT_Data);
+  //   Serial3.flush();
+  //   BT_alive_cnt = 100;
+  //   display.clearDisplay();
+  //   display.setCursor(0, 0); // Start at top-left corner
+  //   display.println("BT_Data = ");
+  //   display.println(BT_Data);
+  //   display.display();
+  // }
 
-  BT_alive_cnt = BT_alive_cnt - 1;
-  if (BT_alive_cnt <= 0)
-  {
-    STOP();
-  }
-  switch (BT_Data)
-  {
-  case 'A':
-    ADVANCE();
-    M_LOG("Run!\r\n");
-    break;
-  case 'B':
-    RIGHT_2();
-    M_LOG("Right up!\r\n");
-    break;
-  case 'C':
-    rotate_1();
-    break;
-  case 'D':
-    RIGHT_3();
-    M_LOG("Right down!\r\n");
-    break;
-  case 'E':
-    BACK(500, 500, 500, 500);
-    M_LOG("Run!\r\n");
-    break;
-  case 'F':
-    LEFT_3();
-    M_LOG("Left down!\r\n");
-    break;
-  case 'G':
-    rotate_2();
-    break;
-  case 'H':
-    LEFT_2();
-    M_LOG("Left up!\r\n");
-    break;
-  case 'Z':
-    STOP();
-    M_LOG("Stop!\r\n");
-    break;
-  case 'z':
-    STOP();
-    M_LOG("Stop!\r\n");
-    break;
-  case 'd':
-    LEFT_2();
-    M_LOG("Left!\r\n");
-    break;
-  case 'b':
-    RIGHT_2();
-    M_LOG("Right!\r\n");
-    break;
-  case 'L':
-    Motor_PWM = 1500;
-    break;
-  case 'M':
-    Motor_PWM = 500;
-    break;
-  }
+  // BT_alive_cnt = BT_alive_cnt - 1;
+  // if (BT_alive_cnt <= 0)
+  // {
+  //   STOP();
+  // }
+  // switch (BT_Data)
+  // {
+  // case 'A':
+  //   ADVANCE();
+  //   M_LOG("Run!\r\n");
+  //   break;
+  // case 'B':
+  //   RIGHT_2();
+  //   M_LOG("Right up!\r\n");
+  //   break;
+  // case 'C':
+  //   rotate_1();
+  //   break;
+  // case 'D':
+  //   RIGHT_3();
+  //   M_LOG("Right down!\r\n");
+  //   break;
+  // case 'E':
+  //   BACK();
+  //   M_LOG("Run!\r\n");
+  //   break;
+  // case 'F':
+  //   LEFT_3();
+  //   M_LOG("Left down!\r\n");
+  //   break;
+  // case 'G':
+  //   rotate_2();
+  //   break;
+  // case 'H':
+  //   LEFT_2();
+  //   M_LOG("Left up!\r\n");
+  //   break;
+  // case 'Z':
+  //   STOP();
+  //   M_LOG("Stop!\r\n");
+  //   break;
+  // case 'z':
+  //   STOP();
+  //   M_LOG("Stop!\r\n");
+  //   break;
+  // case 'd':
+  //   LEFT_2();
+  //   M_LOG("Left!\r\n");
+  //   break;
+  // case 'b':
+  //   RIGHT_2();
+  //   M_LOG("Right!\r\n");
+  //   break;
+  // case 'L':
+  //   break;
+  // case 'M':
+  //   break;
+  // }
 }
 
 /*Voltage Readings transmitter
@@ -723,10 +813,10 @@ void sendVolt()
     }
     else
     {
-      display.clearDisplay();
-      display.setCursor(0, 0);
-      display.println("AI Robot");
-      display.display();
+      // display.clearDisplay();
+      // display.setCursor(0, 0);
+      // display.println("AI Robot");
+      // display.display();
     }
     if (!Serial3.available())
     {
@@ -768,26 +858,32 @@ void setup()
   pinMode(LEcho, INPUT);
   pinMode(RTrig, OUTPUT);
   pinMode(LTrig, OUTPUT);
+
+}
+
+ISR(TIMER2_COMPA_vect)
+{
+ 
 }
 
 void loop()
 {
+
   // run the code in every 20ms
   if (millis() > (time + 15))
   {
     voltCount++;
     time = millis();
 
-    if (not_detected == 1)
-    {
-      Motor_PWM = 1900;
-      Serial.println("FWD");
-      ADVANCE();
-      delay(30);
-      STOP();
-      delay(500);
-    }
-    
+    // measureDistanceBack();
+    // measureDistanceRight();
+    // measureDistanceLeft();
+
+    // Serial.print(ldistance_in_cm);
+    // Serial.print(" ");
+    // Serial.print(rdistance_in_cm);
+    // Serial.println(" cykablyat!!!!");
+
     UART_Control(); //get USB and BT serial data
 
     //constrain the servo movement
