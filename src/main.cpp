@@ -519,9 +519,12 @@ void UART_Control()
         delay(400);
         
         if (ldistance_in_cm > rdistance_in_cm)
-          rotate_2();
+          {rotate_2();
+          delay(300);}
         else
-          rotate_1();
+        {rotate_1();
+          delay(300);}
+          
         return;
       }
     }
