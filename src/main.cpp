@@ -234,7 +234,7 @@ long measureAndFilterDistanceL()
   for (int sample = 0; sample < 20; sample++)
   {
     lfilterArray[sample] = measureDistanceLeft();
-    //delay(30); // to avoid untrasonic interfering
+    delay(5); // to avoid untrasonic interfering
   }
   for (int i = 0; i < 19; i++)
   {
@@ -261,7 +261,7 @@ long measureAndFilterDistanceR()
   for (int sample = 0; sample < 20; sample++)
   {
     rfilterArray[sample] = measureDistanceRight();
-    //delay(30); // to avoid untrasonic interfering
+    delay(5); // to avoid untrasonic interfering
   }
   for (int i = 0; i < 19; i++)
   {
