@@ -503,20 +503,25 @@ void UART_Control()
       if (bldistance_in_cm < BL_MARGIN)
       {
         RIGHT_2();
-        delay(500);
+        delay(400);
         return;
       }
       else if (brdistance_in_cm < BR_MARGIN)
       {
         LEFT_2();
-        delay(500);
+        delay(400);
         return;
       }
 
       else if (ldistance_in_cm < FL_MARGIN || rdistance_in_cm < FR_MARGIN)
       {
         BACK();
-        delay(700);
+        delay(400);
+        
+        if (ldistance_in_cm > rdistance_in_cm)
+          rotate_2();
+        else
+          rotate_1();
         return;
       }
     }
