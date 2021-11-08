@@ -6,7 +6,6 @@
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 
-
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET 28 //4 // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -194,7 +193,7 @@ int MIN_VALUE = 300;
 #define MAX_PWM 2000
 #define MIN_PWM 300
 
-int Motor_PWM = 25; //31
+int Motor_PWM = 29; //31
 
 long measureDistanceBackL()
 {
@@ -225,7 +224,6 @@ long measureDistanceBackL()
   return bldistance_in_cm;
 }
 
-
 long measureDistanceBackR()
 {
   long duration;
@@ -251,7 +249,6 @@ long measureDistanceBackR()
     brdistance_in_cm = (duration / 2.0) / 29.1;
     brdone = 1;
   }
-
 }
 
 long measureDistanceRight()
@@ -281,7 +278,6 @@ long measureDistanceRight()
   }
 }
 
-
 long measureDistanceLeft()
 {
   long duration;
@@ -307,7 +303,6 @@ long measureDistanceLeft()
     ldistance_in_cm = (duration / 2.0) / 29.1;
     ldone = 1;
   }
-
 }
 
 //    ↑A-----B↑
@@ -517,14 +512,18 @@ void UART_Control()
       {
         BACK();
         delay(400);
-        
+
         if (ldistance_in_cm > rdistance_in_cm)
-          {rotate_2();
-          delay(300);}
+        {
+          rotate_2();
+          delay(300);
+        }
         else
-        {rotate_1();
-          delay(300);}
-          
+        {
+          rotate_1();
+          delay(300);
+        }
+
         return;
       }
     }
@@ -836,22 +835,22 @@ ISR(TIMER2_COMPA_vect)
 
 void loop()
 {
-  #ifdef ULTRASONIC_TEST
-    measureDistanceLeft();
-    measureDistanceBackR();
-    measureDistanceRight();
-    measureDistanceBackL();
-    Serial.print(ldistance_in_cm);
-    Serial.print(" ");
-    Serial.print(rdistance_in_cm);
-    Serial.print(" ");
-    Serial.print(brdistance_in_cm);
-    Serial.print(" ");
-    Serial.print(bldistance_in_cm);
-    Serial.print(" ");
-    Serial.println(" cykablyat!!!!");
-  
-  #else
+#ifdef ULTRASONIC_TEST
+  measureDistanceLeft();
+  measureDistanceBackR();
+  measureDistanceRight();
+  measureDistanceBackL();
+  Serial.print(ldistance_in_cm);
+  Serial.print(" ");
+  Serial.print(rdistance_in_cm);
+  Serial.print(" ");
+  Serial.print(brdistance_in_cm);
+  Serial.print(" ");
+  Serial.print(bldistance_in_cm);
+  Serial.print(" ");
+  Serial.println(" cykablyat!!!!");
+
+#else
   // run the code in every 20ms
   if (millis() > (time + 15))
   {
@@ -878,5 +877,5 @@ void loop()
     voltCount = 0;
     sendVolt();
   }
-  #endif
+#endif
 }
