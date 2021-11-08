@@ -485,6 +485,8 @@ void UART_Control()
       // display.println(rdistance_in_cm);
       // display.display();
 
+      Motor_PWM = 29;
+
       if (pan < 80)
       {
         rotate_2();
@@ -542,6 +544,12 @@ void UART_Control()
     if (window_size > 0)
     {
       ADVANCE();
+    }
+
+    if (window_size == 0)
+    {
+      Motor_PWM = 50;
+      rotate_2();
     }
 
     // R1 = Left
