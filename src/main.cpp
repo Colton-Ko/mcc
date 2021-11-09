@@ -26,6 +26,11 @@ int servo_max = 160;
 int stoppable = 0;
 int count = 0;
 
+int rotateLock = 0;
+// If rotateLock = 0: FWD
+// If rotateLock = 1: rotate1
+// If rotateLock = 2: rotate2
+
 int ldone = 1;
 int rdone = 1;
 int brdone = 1;
@@ -193,7 +198,7 @@ int MIN_VALUE = 300;
 #define MAX_PWM 2000
 #define MIN_PWM 300
 
-int Motor_PWM = 29; //31
+int Motor_PWM = 25; //31
 
 long measureDistanceBackL()
 {
@@ -485,7 +490,7 @@ void UART_Control()
       // display.println(rdistance_in_cm);
       // display.display();
 
-      Motor_PWM = 29;
+      Motor_PWM = 25;
 
       if (pan < 80)
       {
@@ -497,6 +502,12 @@ void UART_Control()
         rotate_1();
         return;
       }
+
+      if (ldistance_in_cm > FL_MARGIN && rdistance_in_cm > FR_MARGIN)
+      {
+        rotateLock = 0;
+      }
+
       if (bldistance_in_cm < BL_MARGIN)
       {
         RIGHT_2();
@@ -517,15 +528,24 @@ void UART_Control()
 
         if (ldistance_in_cm > rdistance_in_cm)
         {
-          rotate_2();
-          delay(300);
+          if (rotateLock == 0)
+            rotateLock = 2;
         }
         else
         {
-          rotate_1();
-          delay(300);
+          if (rotateLock == 0)
+            rotateLock = 1;
         }
-
+        switch (rotateLock)
+        {
+          case 1:
+            rotate_1();
+            break;
+          case 2:
+            rotate_2();
+            break;
+        }
+        delay(600);
         return;
       }
     }
@@ -546,11 +566,10 @@ void UART_Control()
       ADVANCE();
     }
 
-    if (window_size == 0)
-    {
-      Motor_PWM = 50;
-      rotate_2();
-    }
+    // if (window_size == 0)
+    // {
+    //   rotate_2();
+    // }
 
     // R1 = Left
     // R2 = Right
