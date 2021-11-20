@@ -15,6 +15,7 @@ int oldV = 1, newV = 0;
 //SoftwareSerial mySerial(4, 6); // RX, TX
 int pan = 90;
 int tilt = 90;
+char MotorAction = 'Z';
 int window_size = 0;
 int BT_alive_cnt = 0;
 int voltCount = 0;
@@ -436,7 +437,62 @@ void STOP()
   MOTORD_STOP(Motor_PWM);
 }
 
+// Task 3 custom code
 void UART_Control()
+{
+  String myString;
+  if (SERIAL.available())
+  {
+    char inputChar = SERIAL.read();
+    if (inputChar == '(')
+    { // Start loop when left bracket detected
+      myString = "";
+      inputChar = SERIAL.read();
+      while (inputChar != ')')
+      {
+        myString = myString + inputChar;
+        inputChar = SERIAL.read();
+        if (!SERIAL.available())
+        {
+          break;
+        } // Break when bracket closed
+      }
+    }
+    int commaIndex = myString.indexOf(','); //Split data in bracket (a, b, c)
+    //Search for the next comma just after the first
+    int secondCommaIndex = myString.indexOf(',', commaIndex + 1);
+    String firstValue = myString.substring(0, commaIndex);
+    String secondValue = myString.substring(commaIndex + 1, secondCommaIndex);
+    String thirdValue = myString.substring(secondCommaIndex + 1);               // To the end of the string
+    if ((firstValue.toInt() > servo_min and firstValue.toInt() < servo_max) and //Convert them to numbers
+        (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max))
+    {
+      pan = firstValue.toInt();
+      tilt = secondValue.toInt();
+      MotorAction = thirdValue.charAt(0);
+    }
+    switch (MotorAction)
+    { 
+    case 'A':  ADVANCE();  M_LOG("Run!\r\n"); break;
+    case 'B':  RIGHT_2();  M_LOG("Right up!\r\n");     break;
+    case 'C':  rotate_1();                            break;
+    case 'D':  RIGHT_3();  M_LOG("Right down!\r\n");   break;
+    case 'E':  BACK();     M_LOG("Run!\r\n");          break;
+    case 'F':  LEFT_3();   M_LOG("Left down!\r\n");    break;
+    case 'G':  rotate_2();                              break;
+    case 'H':  LEFT_2();   M_LOG("Left up!\r\n");     break;
+    case 'Z':  STOP();     M_LOG("Stop!\r\n");        break;
+    case 'z':  STOP();     M_LOG("Stop!\r\n");        break;
+    case 'd':  LEFT_2();   M_LOG("Left!\r\n");        break;
+    case 'b':  RIGHT_2();  M_LOG("Right!\r\n");        break;
+    case 'L':  Motor_PWM = 1500;                      break;
+    case 'M':  Motor_PWM = 500;                       break;
+    }
+  }
+
+}
+
+void task2()
 {
 
   String myString;
