@@ -1,14 +1,19 @@
-#include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+#include <math.h>
 
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-#define OLED_RESET 28 //4 // Reset pin # (or -1 if sharing Arduino reset pin)
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define MPU6050_I2C_ADDRESS 0x68
+#define FREQ  30.0 // sample freq in Hz
+
+// global angle, gyro derived
+double gSensitivity = 65.5; // for 500 deg/s, check data sheet
+double gx = 0, gy = 0, gz = 0;
+double gyrX = 0, gyrY = 0, gyrZ = 0;
+int16_t accX = 0, accY = 0, accZ = 0;
+
+double gyrXoffs = -281.00, gyrYoffs = 18.00, gyrZoffs = -83.00;
+
+
 int oldV = 1, newV = 0;
 #include <SoftwareSerial.h>
 //UNO: (2, 3)
@@ -26,6 +31,7 @@ int servo_min = 20;
 int servo_max = 160;
 int stoppable = 0;
 int count = 0;
+char MotorCmd = 'Z';
 
 int rotateLock = 0;
 // If rotateLock = 0: FWD
@@ -187,7 +193,6 @@ int MIN_VALUE = 300;
 #define SERIAL Serial
 #define BTSERIAL Serial3
 
-#define LOG_DEBUG
 
 #ifdef LOG_DEBUG
 #define M_LOG SERIAL.print
@@ -199,7 +204,65 @@ int MIN_VALUE = 300;
 #define MAX_PWM 2000
 #define MIN_PWM 300
 
-int Motor_PWM = 25; //31
+int Motor_PWM = 60; //31
+
+int i2c_read(int addr, int start, uint8_t *buffer, int size)
+{
+  int i, n, error;
+
+  Wire.beginTransmission(addr);
+  n = Wire.write(start);
+  if (n != 1)
+  return (-10);
+
+  n = Wire.endTransmission(false);    // hold the I2C-bus
+  if (n != 0)
+  return (n);
+
+  // Third parameter is true: relase I2C-bus after data is read.
+  Wire.requestFrom(addr, size, true);
+  i = 0;
+  while(Wire.available() && i<size)
+  {
+    buffer[i++]=Wire.read();
+  }
+  if ( i != size)
+  return (-11);
+
+  return (0);  // return : no error
+}
+
+int i2c_write(int addr, int start, const uint8_t *pData, int size)
+{
+  int n, error;
+
+  Wire.beginTransmission(addr);
+  n = Wire.write(start);        // write the start address
+  if (n != 1)
+  return (-20);
+
+  n = Wire.write(pData, size);  // write data bytes
+  if (n != size)
+  return (-21);
+
+  error = Wire.endTransmission(true); // release the I2C-bus
+  if (error != 0)
+  return (error);
+
+  return (0);         // return : no error
+}
+
+
+int i2c_write_reg(int addr, int reg, uint8_t data)
+{
+  int error;
+  
+  error = i2c_write(addr, reg, &data, 1);
+  return (error);
+}
+
+
+
 
 long measureDistanceBackL()
 {
@@ -437,41 +500,76 @@ void STOP()
   MOTORD_STOP(Motor_PWM);
 }
 
+void calibrate(){
+
+  int x;
+  long xSum = 0, ySum = 0, zSum = 0;
+  uint8_t i2cData[6]; 
+  int num = 500;
+  uint8_t error;
+
+  for (x = 0; x < num; x++){
+
+    error = i2c_read(MPU6050_I2C_ADDRESS, 0x43, i2cData, 6);
+    if(error!=0)
+    return;
+
+    xSum += ((i2cData[0] << 8) | i2cData[1]);
+    ySum += ((i2cData[2] << 8) | i2cData[3]);
+    zSum += ((i2cData[4] << 8) | i2cData[5]);
+  }
+  gyrXoffs = xSum / num;
+  gyrYoffs = ySum / num;
+  gyrZoffs = zSum / num;
+
+//  Serial.println("Calibration result:");
+//  Serial.print(gyrXoffs);
+//  Serial.print(", ");
+//  Serial.print(gyrYoffs);
+//  Serial.print(", ");
+//  Serial.println(gyrZoffs);
+  
+} 
+
+
+void read_sensor_data(){
+ uint8_t i2cData[14];
+ uint8_t error;
+ // read imu data
+ error = i2c_read(MPU6050_I2C_ADDRESS, 0x3b, i2cData, 14);
+ if(error!=0)
+ return;
+
+ // assemble 16 bit sensor data
+ accX = ((i2cData[0] << 8) | i2cData[1]);
+ accY = ((i2cData[2] << 8) | i2cData[3]);
+ accZ = ((i2cData[4] << 8) | i2cData[5]);
+
+ gyrX = (((i2cData[8] << 8) | i2cData[9]) - gyrXoffs) / gSensitivity;
+ gyrY = (((i2cData[10] << 8) | i2cData[11]) - gyrYoffs) / gSensitivity;
+ gyrZ = (((i2cData[12] << 8) | i2cData[13]) - gyrZoffs) / gSensitivity;
+ 
+}
+
+void REPORT_GYRO()
+{
+      delay(30);
+      Serial.print(gx, 2);
+      Serial.print(", ");
+      Serial.print(gy, 2);
+      Serial.print(", ");
+      Serial.println(gz, 2);
+}
+
 // Task 3 custom code
 void UART_Control()
 {
-  String myString;
   if (SERIAL.available())
   {
-    char inputChar = SERIAL.read();
-    if (inputChar == '(')
-    { // Start loop when left bracket detected
-      myString = "";
-      inputChar = SERIAL.read();
-      while (inputChar != ')')
-      {
-        myString = myString + inputChar;
-        inputChar = SERIAL.read();
-        if (!SERIAL.available())
-        {
-          break;
-        } // Break when bracket closed
-      }
-    }
-    int commaIndex = myString.indexOf(','); //Split data in bracket (a, b, c)
-    //Search for the next comma just after the first
-    int secondCommaIndex = myString.indexOf(',', commaIndex + 1);
-    String firstValue = myString.substring(0, commaIndex);
-    String secondValue = myString.substring(commaIndex + 1, secondCommaIndex);
-    String thirdValue = myString.substring(secondCommaIndex + 1);               // To the end of the string
-    if ((firstValue.toInt() > servo_min and firstValue.toInt() < servo_max) and //Convert them to numbers
-        (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max))
-    {
-      pan = firstValue.toInt();
-      tilt = secondValue.toInt();
-      MotorAction = thirdValue.charAt(0);
-    }
-    switch (MotorAction)
+    MotorCmd = Serial.read();
+  }
+    // Serial.println(MotorCmd);
+    switch (MotorCmd)
     { 
     case 'A':  ADVANCE();  M_LOG("Run!\r\n"); break;
     case 'B':  RIGHT_2();  M_LOG("Right up!\r\n");     break;
@@ -485,187 +583,18 @@ void UART_Control()
     case 'z':  STOP();     M_LOG("Stop!\r\n");        break;
     case 'd':  LEFT_2();   M_LOG("Left!\r\n");        break;
     case 'b':  RIGHT_2();  M_LOG("Right!\r\n");        break;
-    case 'L':  Motor_PWM = 1500;                      break;
-    case 'M':  Motor_PWM = 500;                       break;
+    // MPU6050 support
+    case '.':  REPORT_GYRO(); break;
     }
-  }
+    delay(50);
+    MotorCmd = 'Z';
 
-}
-
-void task2()
-{
-
-  String myString;
-  // char BT_Data = 0;
-
-  // Motor_PWM = 1850;
-  // USB data
-  /****
-   * Check if USB Serial data contain brackets
-   */
-
-  if (SERIAL.available())
-  {
-
-    measureDistanceLeft();
-    measureDistanceRight();
-    measureDistanceBackL();
-    measureDistanceBackR();
-
-    char inputChar = SERIAL.read();
-    if (inputChar == '(')
-    { // Start loop when left bracket detected
-      myString = "";
-      inputChar = SERIAL.read();
-      while (inputChar != ')')
-      {
-        myString = myString + inputChar;
-        inputChar = SERIAL.read();
-        if (!SERIAL.available())
-        {
-          break;
-        } // Break when bracket closed
-      }
-    }
-    int commaIndex = myString.indexOf(','); //Split data in bracket (a, b, c)
-    //Search for the next comma just after the first
-    int secondCommaIndex = myString.indexOf(',', commaIndex + 1);
-    String firstValue = myString.substring(0, commaIndex);
-    String secondValue = myString.substring(commaIndex + 1, secondCommaIndex);
-    String thirdValue = myString.substring(secondCommaIndex + 1);               // To the end of the string
-    if ((firstValue.toInt() > servo_min and firstValue.toInt() < servo_max) and //Convert them to numbers
-        (secondValue.toInt() > servo_min and secondValue.toInt() < servo_max))
-    {
-      pan = firstValue.toInt();
-      tilt = secondValue.toInt();
-      window_size = thirdValue.toInt();
-
-      // display.clearDisplay();
-      // display.setCursor(0, 0); // Start at top-left corner
-      // display.println(ldistance_in_cm);
-      // display.println(rdistance_in_cm);
-      // display.display();
-
-      Motor_PWM = 25;
-
-      if (pan < 80)
-      {
-        rotate_2();
-        return;
-      }
-      if (pan > 100)
-      {
-        rotate_1();
-        return;
-      }
-
-      if (ldistance_in_cm > FL_MARGIN && rdistance_in_cm > FR_MARGIN)
-      {
-        rotateLock = 0;
-      }
-
-      if (bldistance_in_cm < BL_MARGIN)
-      {
-        RIGHT_2();
-        delay(400);
-        return;
-      }
-      else if (brdistance_in_cm < BR_MARGIN)
-      {
-        LEFT_2();
-        delay(400);
-        return;
-      }
-
-      else if (ldistance_in_cm < FL_MARGIN || rdistance_in_cm < FR_MARGIN)
-      {
-        BACK();
-        delay(400);
-
-        if (ldistance_in_cm > rdistance_in_cm)
-        {
-          if (rotateLock == 0)
-            rotateLock = 2;
-        }
-        else
-        {
-          if (rotateLock == 0)
-            rotateLock = 1;
-        }
-        switch (rotateLock)
-        {
-          case 1:
-            rotate_1();
-            break;
-          case 2:
-            rotate_2();
-            break;
-        }
-        delay(600);
-        return;
-      }
-    }
-
-    // if (pan < 84)
-    // {
-    //   rotate_2();
-    //   return;
-    // }
-    // if (pan > 96)
-    // {
-    //   rotate_1();
-    //   return;
-    // }
-
-    if (window_size > 0)
-    {
-      ADVANCE();
-    }
-
-    SERIAL.flush();
-    Serial3.println(myString);
-    Serial3.println("Done");
-    if (myString != "")
-    {
-    }
-  }
-
-}
-
-/*Voltage Readings transmitter
-Sends them via Serial3*/
-void sendVolt()
-{
-  newV = analogRead(A0);
-  if (newV != oldV)
-  {
-    if (newV > 0)
-    {
-      if (newV > 2.8)
-      {
-        stoppable = 1;
-      }
-      display.clearDisplay();
-      display.setCursor(0, 0);
-      display.println("Power = ");
-      display.print((float)(5 * newV / 51) * (5 * newV / 51) / 50);
-      display.display();
-    }
-    else
-    {
-    }
-    if (!Serial3.available())
-    {
-      Serial3.println(newV);
-      Serial.println(newV);
-    }
-  }
-  oldV = newV;
 }
 
 //Where the program starts
 void setup()
 {
+  uint8_t sample_div;
   SERIAL.begin(115200); // USB serial setup CHANGE BACK TO 115200
   SERIAL.println("Start");
   STOP();              // Stop the robot
@@ -673,19 +602,6 @@ void setup()
                        //Pan=PL4=>48, Tilt=PL5=>47
   servo_pan.attach(48);
   servo_tilt.attach(47);
-  //////////////////////////////////////////////
-  //OLED Setup//////////////////////////////////
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
-  { // Address 0x3C for 128x32
-    Serial.println(F("SSD1306 allocation failed"));
-  }
-  display.clearDisplay();
-  display.setTextSize(2);              // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE); // Draw white text
-  display.cp437(true);                 // Use full 256 char 'Code Page 437' font
-  display.setCursor(0, 0);             // Start at top-left corner
-  display.println("AI Robot");
-  display.display();
 
   //Setup Voltage detector
   pinMode(A0, INPUT);
@@ -698,42 +614,41 @@ void setup()
   pinMode(BRTrig, OUTPUT);
   pinMode(BLEcho, INPUT);
   pinMode(BLTrig, OUTPUT);
-}
+  // Wire.begin();
+  i2c_write_reg (MPU6050_I2C_ADDRESS, 0x6b, 0x00);
 
-ISR(TIMER2_COMPA_vect)
-{
+  // CONFIG:
+  // Low pass filter samples, 1khz sample rate
+  i2c_write_reg (MPU6050_I2C_ADDRESS, 0x1a, 0x01);
+
+  // GYRO_CONFIG:
+  // 500 deg/s, FS_SEL=1
+  // This means 65.5 LSBs/deg/s
+  i2c_write_reg(MPU6050_I2C_ADDRESS, 0x1b, 0x08);
+
+  // CONFIG:
+  // set sample rate
+  // sample rate FREQ = Gyro sample rate / (sample_div + 1)
+  // 1kHz / (div + 1) = FREQ  
+  // reg_value = 1khz/FREQ - 1
+  sample_div = 1000 / FREQ - 1;
+  i2c_write_reg (MPU6050_I2C_ADDRESS, 0x19, sample_div);
+  calibrate();
+
+
 }
 
 void loop()
 {
-#ifdef ULTRASONIC_TEST
-  measureDistanceLeft();
-  measureDistanceBackR();
-  measureDistanceRight();
-  measureDistanceBackL();
-  Serial.print(ldistance_in_cm);
-  Serial.print(" ");
-  Serial.print(rdistance_in_cm);
-  Serial.print(" ");
-  Serial.print(brdistance_in_cm);
-  Serial.print(" ");
-  Serial.print(bldistance_in_cm);
-  Serial.print(" ");
-  Serial.println(" cykablyat!!!!");
 
-#else
   // run the code in every 20ms
-  if (millis() > (time + 15))
-  {
-    voltCount++;
-    time = millis();
 
-    // Serial.print(ldistance_in_cm);
-    // Serial.print(" ");
-    // Serial.print(rdistance_in_cm);
-    // Serial.println(" cykablyat!!!!");
-
-    UART_Control(); //get USB and BT serial data
+    int error;
+    double dT;
+    double ax, ay, az;
+    unsigned long start_time, end_time;
+    start_time = millis();
+    
 
     //constrain the servo movement
     pan = constrain(pan, servo_min, servo_max);
@@ -742,11 +657,26 @@ void loop()
     //send signal to servo
     servo_pan.write(pan);
     servo_tilt.write(tilt);
-  }
-  if (voltCount >= 5)
-  {
-    voltCount = 0;
-    sendVolt();
-  }
-#endif
+
+    read_sensor_data();
+
+    // angles based on accelerometer
+    ay = atan2(accX, sqrt( pow(accY, 2) + pow(accZ, 2))) * 180 / M_PI;
+    ax = atan2(accY, sqrt( pow(accX, 2) + pow(accZ, 2))) * 180 / M_PI;
+
+    // angles based on gyro (deg/s)
+    gx = gx + gyrX / FREQ;
+    gy = gy - gyrY / FREQ;
+    gz = gz + gyrZ / FREQ;
+
+    // complementary filter
+    // tau = DT*(A)/(1-A)
+    // = 0.48sec
+    gx = gx * 0.96 + ax * 0.04;
+    gy = gy * 0.96 + ay * 0.04;
+
+    UART_Control(); //get USB and BT serial data
+    end_time = millis();
+    // delay(((1/FREQ) * 1000) - (end_time - start_time));
+
 }
